@@ -1,3 +1,11 @@
+
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
+
+
+#include <uxtheme.h>
+#pragma comment(lib,"uxtheme")
+
 #include "include/window.h"
 #include "include/sizedStruct.h"
 
@@ -32,7 +40,7 @@ private:
     bool                    done{};
 
     Point                   center;
-
+    double                  circularity;
     
 
     void RegisterRawMouse() 
@@ -74,6 +82,12 @@ private:
     {
         drawing=false;
 
+        if(points.empty())
+        {
+            return;
+        }
+
+
         center.first  = static_cast<int>(std::ranges::fold_left(points |  std::ranges::views::keys ,  0, std::plus<>()) / points.size());
         center.second = static_cast<int>(std::ranges::fold_left(points |  std::ranges::views::values ,0, std::plus<>()) / points.size());
 
@@ -95,11 +109,12 @@ private:
             return acc + (diff * diff);
         });
 
-        auto variance = sq_sum / lengths.size()-1;
+        auto variance = sq_sum / (lengths.size()-1);
+        circularity = 100.0 -  (100.0*sqrt(variance)/ averageLen);
 
         std::print("variance {}\n",variance);                
 
-        std::print("{}%\n",  100 -   (100.0*sqrt(variance)/ averageLen));
+        std::print("{:.1}%\n",  circularity);
 
         done=true;
 
@@ -120,7 +135,6 @@ private:
         points.emplace_back(x,y);
 
         InvalidateRect(window,nullptr,false);
-
     }
 
 
@@ -172,14 +186,20 @@ private:
     }
 
 
+
+    void SetupWindow()
+    {
+        Window::center();
+        //RegisterRawMouse();
+    }
+
     bool proc(UINT m, WPARAM w, LPARAM l) override
     {
         switch(m)
         {
         case WM_WINDOW_CREATED:
-            RegisterRawMouse();
+            SetupWindow();
             return true;
-        
 
         case WM_LBUTTONDOWN:
             lButtonDown();
@@ -193,20 +213,13 @@ private:
             mouseMove(l);
             return true;
 
-
-
         case WM_INPUT: 
             input(l);
             return false;
-
         }
 
         return false;
     }
-
-
-
-
 
 
 
@@ -234,16 +247,29 @@ private:
                     center.second-1,
                     center.first+1,
                     center.second+1);
+
+            auto text = std::format("{:.2f}%",circularity);
+
+            TextOutA(windowDc,0,0,text.c_str(), text.size());
         }
     }
-
 };
 
 
-int main()
+int WinMain(HINSTANCE,HINSTANCE,LPSTR,int)
 try
 {
+
+    auto config = INITCOMMONCONTROLSEX
+    {
+        .dwSize = sizeof(INITCOMMONCONTROLSEX),
+        .dwICC = ICC_STANDARD_CLASSES
+    };
+
+    auto b = InitCommonControlsEx(&config);
+
     auto window = CircleWindow{}; 
+
 
     Window::messageLoop();
 }
@@ -251,3 +277,9 @@ catch(std::exception const &e)
 {
     std::print("\n{} caught \"{}\"\n",__func__,e.what());
 }
+
+
+
+
+
+
