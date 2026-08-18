@@ -35,43 +35,18 @@ private:
     bool                    drawing{};
 
     std::vector<Point>      points;
-    std::vector<Point>      rawPoints;
 
     bool                    done{};
 
     Point                   center;
+    double                  radius;
     double                  circularity;
     
-
-    void RegisterRawMouse() 
-    {
-        auto registration =  RAWINPUTDEVICE 
-        {
-            .usUsagePage = 0x01,
-            .usUsage     = 0x02,
-            .dwFlags     = 0,   
-            .hwndTarget  = window
-        };
-
-        RegisterRawInputDevices(&registration, 1, sizeof(registration));
-    }
 
     void lButtonDown()
     {
         points.clear();
         points.reserve(1000);
-
-        rawPoints.clear();
-        rawPoints.reserve(1000);
-
-
-        auto here = POINT{};
-        GetCursorPos(&here);
-        ScreenToClient(window,&here);
-
-
-        rawPoints.emplace_back(here.x,here.y);
-
 
         drawing=true;
         done=false;
@@ -87,9 +62,14 @@ private:
             return;
         }
 
+        auto left   = std::ranges::min_element(points, {}, &Point::first)->first;
+        auto right  = std::ranges::max_element(points, {}, &Point::first)->first;
+        auto top    = std::ranges::min_element(points, {}, &Point::second)->second;
+        auto bottom = std::ranges::max_element(points, {}, &Point::second)->second;
 
-        center.first  = static_cast<int>(std::ranges::fold_left(points |  std::ranges::views::keys ,  0, std::plus<>()) / points.size());
-        center.second = static_cast<int>(std::ranges::fold_left(points |  std::ranges::views::values ,0, std::plus<>()) / points.size());
+
+        center.first  = (right+left)/2;
+        center.second = (bottom+top)/2;
 
         auto lengths = std::vector<double>{};
 
@@ -99,22 +79,18 @@ private:
         }
 
 
-        auto averageLen = std::ranges::fold_left(lengths ,  0.0, std::plus<>()) / lengths.size();
+        radius = std::ranges::fold_left(lengths ,  0.0, std::plus<>()) / lengths.size();
 
-        std::print("averageLen {}\n",averageLen);                
-        
+      
 
-        auto sq_sum = std::ranges::fold_left(lengths, 0.0, [averageLen](double acc, double val) {
-            double diff = val - averageLen;
+        auto sq_sum = std::ranges::fold_left(lengths, 0.0, [&](double acc, double val) {
+            double diff = val - radius;
             return acc + (diff * diff);
         });
 
         auto variance = sq_sum / (lengths.size()-1);
-        circularity = 100.0 -  (100.0*sqrt(variance)/ averageLen);
+        circularity = 100.0 -  (100.0*sqrt(variance)/ radius);
 
-        std::print("variance {}\n",variance);                
-
-        std::print("{:.1}%\n",  circularity);
 
         done=true;
 
@@ -138,59 +114,10 @@ private:
     }
 
 
-    void input(LPARAM l)
-    {
-        if(!drawing)
-        {
-            return;
-        }
-
-
-        auto dataSize = UINT{};
-
-        GetRawInputData((HRAWINPUT)l, RID_INPUT, nullptr, &dataSize, sizeof(RAWINPUTHEADER));
-        
-        if (dataSize > 0) 
-        {
-            auto data = SizedStruct<RAWINPUT>{dataSize};
-
-            if (GetRawInputData((HRAWINPUT)l, RID_INPUT, data.bytes(), &dataSize, sizeof(RAWINPUTHEADER)) == dataSize) 
-            {
-
-                if (data->header.dwType == RIM_TYPEMOUSE) 
-                {
-                    auto const &mouse = data->data.mouse;
-
-                    // Check flags to determine how coordinates are formatted
-                    auto flags = mouse.usFlags;
-                    
-                    if ((flags & MOUSE_MOVE_ABSOLUTE) == 0) 
-                    {
-                        // standard behavior: Relative movement delta values
-                        auto deltaX = mouse.lLastX;
-                        auto deltaY = mouse.lLastY;
-                        
-                        rawPoints.emplace_back( rawPoints.back().first + deltaX,
-                                                rawPoints.back().second + deltaY);
-
-
-                    } else 
-                    {
-                        // Rare behavior: Absolute screen coordinates (e.g., drawing tablets/remotes)
-                        LONG absX = data->data.mouse.lLastX;
-                        LONG absY = data->data.mouse.lLastY;
-                    }
-                }
-            }
-        }
-    }
-
-
 
     void SetupWindow()
     {
         Window::center();
-        //RegisterRawMouse();
     }
 
     bool proc(UINT m, WPARAM w, LPARAM l) override
@@ -212,10 +139,6 @@ private:
         case WM_MOUSEMOVE:
             mouseMove(l);
             return true;
-
-        case WM_INPUT: 
-            input(l);
-            return false;
         }
 
         return false;
@@ -225,7 +148,10 @@ private:
 
     void paint(PAINTSTRUCT const &, HDC windowDc)  override
     {
-        auto oldPen   = SelectObject(windowDc,blackPen);
+        auto nullBrush = GetStockObject(NULL_BRUSH);
+
+        auto oldPen    = SelectObject(windowDc,blackPen);
+        auto oldBrush  = SelectObject(windowDc,nullBrush);
 
         for(auto const &point : points)
         {
@@ -236,22 +162,32 @@ private:
                     point.second+1);
         }
 
-        SelectObject(windowDc,oldPen);
-
         if(done)
         {
             SelectObject(windowDc,redPen);
 
             Ellipse(windowDc, 
-                    center.first-1,    
-                    center.second-1,
-                    center.first+1,
-                    center.second+1);
+                    center.first-2,    
+                    center.second-2,
+                    center.first+2,
+                    center.second+2);
+
+            Ellipse(windowDc, 
+                    center.first-radius,    
+                    center.second-radius,
+                    center.first+radius,
+                    center.second+radius);
+
 
             auto text = std::format("{:.2f}%",circularity);
 
-            TextOutA(windowDc,0,0,text.c_str(), text.size());
+            TextOutA(windowDc,0,0,text.c_str(), static_cast<int>(text.size()));
         }
+
+
+        SelectObject(windowDc,oldPen);
+        SelectObject(windowDc,oldBrush);
+
     }
 };
 
@@ -259,7 +195,6 @@ private:
 int WinMain(HINSTANCE,HINSTANCE,LPSTR,int)
 try
 {
-
     auto config = INITCOMMONCONTROLSEX
     {
         .dwSize = sizeof(INITCOMMONCONTROLSEX),
